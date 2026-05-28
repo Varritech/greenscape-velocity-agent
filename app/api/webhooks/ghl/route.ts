@@ -2,7 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { verifyGhlSignature } from "@/lib/ghl/verify";
 import { GhlLeadPayloadSchema } from "@/lib/ghl/schema";
 import { insertLead } from "@/lib/db/leads";
+import { insertQualification } from "@/lib/db/qualifications";
 import { recordAudit } from "@/lib/db/audit";
+import { qualifyLead, QualifierError } from "@/lib/qualifier";
 
 export const runtime = "nodejs";
 
@@ -48,12 +50,55 @@ export async function POST(req: NextRequest) {
     payload: { source: parsed.data.source },
   });
 
-  // TODO(S7): enqueue qualifier
-  // TODO(S8): SMS dispatcher
-  // TODO(S9): Slack notifier + GHL writeback
+  try {
+    const q = await qualifyLead(parsed.data);
+    const row = await insertQualification({
+      lead_id: lead.id,
+      score: q.score,
+      tier: q.tier,
+      reasoning: q.reasoning,
+      model: q.model,
+      prompt_sha: q.prompt_sha,
+    });
+    await recordAudit({
+      entity_type: "qualification",
+      entity_id: row.id,
+      action: "qualification.completed",
+      actor: q.model,
+      payload: { tier: q.tier, score: q.score },
+    });
 
-  return NextResponse.json(
-    { accepted: true, lead_id: lead.id, contact_id: parsed.data.contact_id },
-    { status: 202 },
-  );
+    // TODO(S8): SMS dispatcher reacts to tier === 'qualified'
+    // TODO(S9): Slack notifier + GHL writeback
+
+    return NextResponse.json(
+      {
+        accepted: true,
+        lead_id: lead.id,
+        contact_id: parsed.data.contact_id,
+        qualification: { score: q.score, tier: q.tier },
+      },
+      { status: 202 },
+    );
+  } catch (err) {
+    // Qualification failure must not lose the lead. Lead row is already
+    // persisted; surface a 202 with a qualification_error tag so retries
+    // can target the qualifier without re-creating the lead.
+    await recordAudit({
+      entity_type: "lead",
+      entity_id: lead.id,
+      action: "qualification.failed",
+      actor: "ghl-webhook",
+      payload: { reason: err instanceof QualifierError ? err.message : "unknown" },
+    });
+    return NextResponse.json(
+      {
+        accepted: true,
+        lead_id: lead.id,
+        contact_id: parsed.data.contact_id,
+        qualification_error: true,
+      },
+      { status: 202 },
+    );
+  }
 }

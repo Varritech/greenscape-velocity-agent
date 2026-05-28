@@ -1,9 +1,20 @@
 import { createHmac } from "node:crypto";
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import type Anthropic from "@anthropic-ai/sdk";
 import { POST } from "@/app/api/webhooks/ghl/route";
 import { __setDbClientForTests } from "@/lib/db/client";
+import { __setAnthropicClientForTests } from "@/lib/qualifier";
 
 const SECRET = "test_secret_do_not_use_in_prod";
+
+const stubModelOutput = JSON.stringify({
+  score: 80,
+  tier: "qualified",
+  reasoning: "stub",
+  subscores: { budget: 15, lot: 20, hoa: 15, timeline: 15, location: 15 },
+  modifiers_applied: [],
+  suggested_next_action: "SMS now",
+});
 
 beforeAll(() => {
   process.env.GHL_WEBHOOK_SECRET = SECRET;
@@ -23,6 +34,13 @@ beforeEach(() => {
     },
   };
   __setDbClientForTests(fake as unknown as Parameters<typeof __setDbClientForTests>[0]);
+
+  const fakeAnthropic = {
+    messages: {
+      create: async () => ({ content: [{ type: "text", text: stubModelOutput }] }),
+    },
+  } as unknown as Anthropic;
+  __setAnthropicClientForTests(fakeAnthropic);
 });
 
 const sign = (body: string) =>
@@ -57,7 +75,12 @@ describe("POST /api/webhooks/ghl", () => {
     const res = await POST(makeRequest(body, sign(body)));
     expect(res.status).toBe(202);
     const json = await res.json();
-    expect(json).toMatchObject({ accepted: true, contact_id: "abc123", lead_id: "lead-fake" });
+    expect(json).toMatchObject({
+      accepted: true,
+      contact_id: "abc123",
+      lead_id: "lead-fake",
+      qualification: { score: 80, tier: "qualified" },
+    });
   });
 
   it("returns 401 on bad signature", async () => {
