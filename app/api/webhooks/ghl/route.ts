@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { verifyGhlSignature } from "@/lib/ghl/verify";
 import { GhlLeadPayloadSchema } from "@/lib/ghl/schema";
+import { insertLead } from "@/lib/db/leads";
+import { recordAudit } from "@/lib/db/audit";
 
 export const runtime = "nodejs";
 
@@ -32,10 +34,26 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // TODO(S6): persist lead via Supabase data layer
+  const lead = await insertLead({
+    ghl_contact_id: parsed.data.contact_id,
+    source: parsed.data.source,
+    raw_payload: parsed.data,
+  });
+
+  await recordAudit({
+    entity_type: "lead",
+    entity_id: lead.id,
+    action: "lead.received",
+    actor: "ghl-webhook",
+    payload: { source: parsed.data.source },
+  });
+
   // TODO(S7): enqueue qualifier
   // TODO(S8): SMS dispatcher
   // TODO(S9): Slack notifier + GHL writeback
 
-  return NextResponse.json({ accepted: true, contact_id: parsed.data.contact_id }, { status: 202 });
+  return NextResponse.json(
+    { accepted: true, lead_id: lead.id, contact_id: parsed.data.contact_id },
+    { status: 202 },
+  );
 }

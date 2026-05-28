@@ -1,11 +1,28 @@
 import { createHmac } from "node:crypto";
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { POST } from "@/app/api/webhooks/ghl/route";
+import { __setDbClientForTests } from "@/lib/db/client";
 
 const SECRET = "test_secret_do_not_use_in_prod";
 
 beforeAll(() => {
   process.env.GHL_WEBHOOK_SECRET = SECRET;
+});
+
+beforeEach(() => {
+  const fake = {
+    from() {
+      const chain: Record<string, unknown> = {
+        insert: () => chain,
+        select: () => chain,
+        single: () => Promise.resolve({ data: { id: "lead-fake", source: "Google LSA" }, error: null }),
+        then: (onF: (r: { data: null; error: null }) => unknown) =>
+          Promise.resolve({ data: null, error: null }).then(onF),
+      };
+      return chain;
+    },
+  };
+  __setDbClientForTests(fake as unknown as Parameters<typeof __setDbClientForTests>[0]);
 });
 
 const sign = (body: string) =>
@@ -40,7 +57,7 @@ describe("POST /api/webhooks/ghl", () => {
     const res = await POST(makeRequest(body, sign(body)));
     expect(res.status).toBe(202);
     const json = await res.json();
-    expect(json).toMatchObject({ accepted: true, contact_id: "abc123" });
+    expect(json).toMatchObject({ accepted: true, contact_id: "abc123", lead_id: "lead-fake" });
   });
 
   it("returns 401 on bad signature", async () => {
