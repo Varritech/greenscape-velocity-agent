@@ -13,6 +13,9 @@ import { fileURLToPath } from "node:url";
 export const QUALIFIER_PROMPT_SHA = "6e462fc";
 const QUALIFIER_DIR = "qualifier-v1.0.0";
 
+export const PROPOSAL_PROMPT_SHA = "907b1e8";
+const PROPOSAL_DIR = "proposal-draft-v1.0.0";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -33,6 +36,19 @@ export function loadQualifierPrompt(): QualifierPrompt {
     sha: QUALIFIER_PROMPT_SHA,
   };
   return cached;
+}
+
+let cachedProposal: QualifierPrompt | null = null;
+
+export function loadProposalPrompt(): QualifierPrompt {
+  if (cachedProposal) return cachedProposal;
+  const base = path.join(__dirname, "prompts", PROPOSAL_DIR);
+  cachedProposal = {
+    system: readFileSync(path.join(base, "system.md"), "utf8"),
+    user_template: readFileSync(path.join(base, "user.template.md"), "utf8"),
+    sha: PROPOSAL_PROMPT_SHA,
+  };
+  return cachedProposal;
 }
 
 export function fillTemplate(
