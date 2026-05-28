@@ -5,6 +5,7 @@ import { insertLead } from "@/lib/db/leads";
 import { insertQualification } from "@/lib/db/qualifications";
 import { recordAudit } from "@/lib/db/audit";
 import { qualifyLead, QualifierError } from "@/lib/qualifier";
+import { sendQualifiedLeadSMS, SmsError } from "@/lib/sms";
 
 export const runtime = "nodejs";
 
@@ -68,7 +69,34 @@ export async function POST(req: NextRequest) {
       payload: { tier: q.tier, score: q.score },
     });
 
-    // TODO(S8): SMS dispatcher reacts to tier === 'qualified'
+    let smsSid: string | null = null;
+    if (q.tier === "qualified" && parsed.data.phone) {
+      try {
+        const sent = await sendQualifiedLeadSMS({
+          phone: parsed.data.phone,
+          leadFirstName: parsed.data.first_name ?? "",
+          source: parsed.data.source,
+          suggestedNextAction: q.suggested_next_action,
+        });
+        smsSid = sent.sid;
+        await recordAudit({
+          entity_type: "lead",
+          entity_id: lead.id,
+          action: "sms.queued",
+          actor: "twilio",
+          payload: { sid: sent.sid, status: sent.status, body: sent.body },
+        });
+      } catch (err) {
+        await recordAudit({
+          entity_type: "lead",
+          entity_id: lead.id,
+          action: "sms.failed",
+          actor: "twilio",
+          payload: { reason: err instanceof SmsError ? err.message : "unknown" },
+        });
+      }
+    }
+
     // TODO(S9): Slack notifier + GHL writeback
 
     return NextResponse.json(
@@ -77,6 +105,7 @@ export async function POST(req: NextRequest) {
         lead_id: lead.id,
         contact_id: parsed.data.contact_id,
         qualification: { score: q.score, tier: q.tier },
+        sms_sid: smsSid,
       },
       { status: 202 },
     );
