@@ -4,6 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { POST } from "@/app/api/webhooks/ghl/route";
 import { __setDbClientForTests } from "@/lib/db/client";
 import { __setAnthropicClientForTests } from "@/lib/qualifier";
+import { __setTwilioClientForTests } from "@/lib/sms";
 
 const SECRET = "test_secret_do_not_use_in_prod";
 
@@ -41,6 +42,16 @@ beforeEach(() => {
     },
   } as unknown as Anthropic;
   __setAnthropicClientForTests(fakeAnthropic);
+
+  process.env.TWILIO_FROM_NUMBER = "+14805550100";
+  process.env.TWILIO_ACCOUNT_SID = "AC_test";
+  process.env.TWILIO_AUTH_TOKEN = "token_test";
+  const fakeTwilio = {
+    messages: {
+      create: async () => ({ sid: "SMstub", status: "queued" }),
+    },
+  };
+  __setTwilioClientForTests(fakeTwilio as unknown as Parameters<typeof __setTwilioClientForTests>[0]);
 });
 
 const sign = (body: string) =>
@@ -80,6 +91,7 @@ describe("POST /api/webhooks/ghl", () => {
       contact_id: "abc123",
       lead_id: "lead-fake",
       qualification: { score: 80, tier: "qualified" },
+      sms_sid: "SMstub",
     });
   });
 
