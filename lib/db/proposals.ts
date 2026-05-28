@@ -1,5 +1,5 @@
 import { getDbClient } from "./client";
-import type { ProposalRow } from "./types";
+import type { ProposalRow, LeadRow } from "./types";
 
 export interface InsertProposalDraftInput {
   lead_id: string;
@@ -31,6 +31,39 @@ export async function insertProposalDraft(
 export interface ApproveProposalInput {
   id: string;
   marcus_edits: Record<string, unknown>;
+}
+
+export async function listProposalDrafts(): Promise<ProposalRow[]> {
+  const { data, error } = await getDbClient()
+    .from("proposals")
+    .select("*")
+    .eq("status", "draft")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as ProposalRow[];
+}
+
+export interface ProposalWithLead {
+  proposal: ProposalRow;
+  lead: LeadRow;
+}
+
+export async function getProposalWithLead(id: string): Promise<ProposalWithLead | null> {
+  const { data: p, error: pErr } = await getDbClient()
+    .from("proposals")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (pErr) throw pErr;
+  if (!p) return null;
+  const { data: l, error: lErr } = await getDbClient()
+    .from("leads")
+    .select("*")
+    .eq("id", (p as ProposalRow).lead_id)
+    .maybeSingle();
+  if (lErr) throw lErr;
+  if (!l) return null;
+  return { proposal: p as ProposalRow, lead: l as LeadRow };
 }
 
 export async function approveProposal(input: ApproveProposalInput): Promise<ProposalRow> {
