@@ -6,6 +6,8 @@ import { insertQualification } from "@/lib/db/qualifications";
 import { recordAudit } from "@/lib/db/audit";
 import { qualifyLead, QualifierError } from "@/lib/qualifier";
 import { sendQualifiedLeadSMS, SmsError } from "@/lib/sms";
+import { notifyQualification } from "@/lib/slack";
+import { setContactCustomField } from "@/lib/ghl/writeback";
 
 export const runtime = "nodejs";
 
@@ -97,7 +99,46 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // TODO(S9): Slack notifier + GHL writeback
+    const slackOk = await notifyQualification({
+      leadId: lead.id,
+      leadName: `${parsed.data.first_name ?? ""} ${parsed.data.last_name ?? ""}`.trim(),
+      source: parsed.data.source,
+      score: q.score,
+      tier: q.tier,
+      reasoning: q.reasoning,
+      suggestedNextAction: q.suggested_next_action,
+      smsSid,
+      appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "",
+    });
+    await recordAudit({
+      entity_type: "lead",
+      entity_id: lead.id,
+      action: slackOk ? "slack.posted" : "slack.skipped_or_failed",
+      actor: "slack",
+      payload: { tier: q.tier },
+    });
+
+    const scoreFieldId = process.env.GHL_FIELD_VELOCITY_SCORE;
+    if (scoreFieldId && parsed.data.contact_id) {
+      try {
+        await setContactCustomField(parsed.data.contact_id, scoreFieldId, q.score);
+        await recordAudit({
+          entity_type: "lead",
+          entity_id: lead.id,
+          action: "ghl.writeback.score",
+          actor: "ghl-writeback",
+          payload: { contact_id: parsed.data.contact_id, score: q.score },
+        });
+      } catch (err) {
+        await recordAudit({
+          entity_type: "lead",
+          entity_id: lead.id,
+          action: "ghl.writeback.failed",
+          actor: "ghl-writeback",
+          payload: { reason: err instanceof Error ? err.message : "unknown" },
+        });
+      }
+    }
 
     return NextResponse.json(
       {
